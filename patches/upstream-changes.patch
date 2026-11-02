@@ -1,0 +1,1987 @@
+diff --git a/.gitignore b/.gitignore
+index 6f00fdb9..f32eb318 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -81,3 +81,7 @@ crashlytics-build.properties
+ /graft/
+ # graft's ripgrep re-admit file (local search config)
+ /.ignore
++
++# XR Simulation preferences are per user (AR Foundation writes them on editor start)
++/[Aa]ssets/XR/UserSimulationSettings/
++/[Aa]ssets/XR/UserSimulationSettings.meta
+diff --git a/Assets/Editor/PlatformBuild.cs b/Assets/Editor/PlatformBuild.cs
+index d49f88bd..be2b1cf6 100644
+--- a/Assets/Editor/PlatformBuild.cs
++++ b/Assets/Editor/PlatformBuild.cs
+@@ -3,6 +3,8 @@ using System.Linq;
+ using UnityEditor;
+ using UnityEditor.Build;
+ using UnityEditor.Build.Reporting;
++using UnityEditor.Callbacks;
++using UnityEditor.XR.ARKit;
+ using UnityEngine;
+ 
+ // Command-line player builds for the non-web platforms.
+@@ -35,6 +37,14 @@ public static class PlatformBuild
+ 	// Bundle identifier and Android backend; settings the project did not have. Change before publishing.
+ 	private const string BundleId = "app.recompile.cardwars";
+ 
++	// A free Apple team can't sign app.recompile.cardwars, so iOS uses an id of its own.
++	private const string IosBundleId = "com.aaron3312.cardwarsar";
++
++	private const string CameraUsage = "La cámara muestra el tablero de Card Wars sobre tu mesa, en realidad aumentada.";
++
++	// iOS asks before an app talks to other devices on the wifi ("Versus en la mesa" connects the two phones).
++	private const string LocalNetworkUsage = "Para jugar «Versus en la mesa» con otro teléfono conectado a tu misma wifi.";
++
+ 	private static void ConfigureMobile(BuildTarget target)
+ 	{
+ 		if (target == BuildTarget.Android)
+@@ -45,10 +55,37 @@ public static class PlatformBuild
+ 		}
+ 		else if (target == BuildTarget.iOS)
+ 		{
+-			PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.iOS, BundleId);
++			PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.iOS, IosBundleId);
+ 			PlayerSettings.iOS.targetOSVersionString = "15.0";
+ 			PlayerSettings.iOS.sdkVersion = Environment.GetCommandLineArgs().Contains("-simulator") ? iOSSdkVersion.SimulatorSDK : iOSSdkVersion.DeviceSDK;
++			PlayerSettings.iOS.cameraUsageDescription = CameraUsage;
++			PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
++			PlayerSettings.allowedAutorotateToPortrait = false;
++			PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
++			PlayerSettings.allowedAutorotateToLandscapeLeft = true;
++			PlayerSettings.allowedAutorotateToLandscapeRight = true;
++			ARKitSettings arkit = ARKitSettings.GetOrCreateSettings();
++			arkit.requirement = ARKitSettings.Requirement.Required;
++			EditorUtility.SetDirty(arkit);
++		}
++	}
++
++	// Info.plist keys that PlayerSettings has no field for.
++	[PostProcessBuild(100)]
++	public static void OnPostprocessBuild(BuildTarget target, string path)
++	{
++#if UNITY_IOS
++		if (target != BuildTarget.iOS)
++		{
++			return;
+ 		}
++		string plistPath = System.IO.Path.Combine(path, "Info.plist");
++		UnityEditor.iOS.Xcode.PlistDocument plist = new UnityEditor.iOS.Xcode.PlistDocument();
++		plist.ReadFromFile(plistPath);
++		plist.root.SetString("NSLocalNetworkUsageDescription", LocalNetworkUsage);
++		plist.root.SetString("NSCameraUsageDescription", CameraUsage);
++		plist.WriteToFile(plistPath);
++#endif
+ 	}
+ 
+ 	private static string GetArg(string name)
+diff --git a/Assets/Scripts/Assembly-CSharp/ATKBonusForBuilding.cs b/Assets/Scripts/Assembly-CSharp/ATKBonusForBuilding.cs
+index 7bbfbf92..75bb1b3a 100644
+--- a/Assets/Scripts/Assembly-CSharp/ATKBonusForBuilding.cs
++++ b/Assets/Scripts/Assembly-CSharp/ATKBonusForBuilding.cs
+@@ -48,7 +48,7 @@ public class ATKBonusForBuilding : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_BOOST_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreature.cs b/Assets/Scripts/Assembly-CSharp/AttackCreature.cs
+index d7595bee..9560df23 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreature.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreature.cs
+@@ -128,7 +128,7 @@ public class AttackCreature : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreatureCorn.cs b/Assets/Scripts/Assembly-CSharp/AttackCreatureCorn.cs
+index aa389691..68b061c0 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreatureCorn.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreatureCorn.cs
+@@ -128,7 +128,7 @@ public class AttackCreatureCorn : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreatureCotton.cs b/Assets/Scripts/Assembly-CSharp/AttackCreatureCotton.cs
+index 5990eabe..cc5a5998 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreatureCotton.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreatureCotton.cs
+@@ -128,7 +128,7 @@ public class AttackCreatureCotton : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreaturePlains.cs b/Assets/Scripts/Assembly-CSharp/AttackCreaturePlains.cs
+index 2bc2266f..2d4e139c 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreaturePlains.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreaturePlains.cs
+@@ -128,7 +128,7 @@ public class AttackCreaturePlains : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreatureSand.cs b/Assets/Scripts/Assembly-CSharp/AttackCreatureSand.cs
+index e1f730e1..3275644c 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreatureSand.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreatureSand.cs
+@@ -128,7 +128,7 @@ public class AttackCreatureSand : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackCreatureSwamp.cs b/Assets/Scripts/Assembly-CSharp/AttackCreatureSwamp.cs
+index edb4ca66..b6c49fff 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackCreatureSwamp.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackCreatureSwamp.cs
+@@ -128,7 +128,7 @@ public class AttackCreatureSwamp : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/AttackSelf.cs b/Assets/Scripts/Assembly-CSharp/AttackSelf.cs
+index fe435fd8..cb92c762 100644
+--- a/Assets/Scripts/Assembly-CSharp/AttackSelf.cs
++++ b/Assets/Scripts/Assembly-CSharp/AttackSelf.cs
+@@ -65,7 +65,7 @@ public class AttackSelf : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/BattlePhaseManager.cs b/Assets/Scripts/Assembly-CSharp/BattlePhaseManager.cs
+index 10c6102e..8efdff27 100644
+--- a/Assets/Scripts/Assembly-CSharp/BattlePhaseManager.cs
++++ b/Assets/Scripts/Assembly-CSharp/BattlePhaseManager.cs
+@@ -163,7 +163,7 @@ public class BattlePhaseManager : MonoBehaviour
+ 			prevPhase = currentPhase;
+ 			currentPhase = Phase;
+ 			GameObject tweenTarget = GetTweenTarget(currentPhase);
+-			bool flag = false;
++			bool flag = VersusMatch.SuppressPhaseTween(currentPhase);
+ 			if (tweenTarget != null && !flag)
+ 			{
+ 				tweenTarget.SendMessage("OnClick", SendMessageOptions.DontRequireReceiver);
+diff --git a/Assets/Scripts/Assembly-CSharp/BlockFloopTarget.cs b/Assets/Scripts/Assembly-CSharp/BlockFloopTarget.cs
+index f7be9062..c2612589 100644
+--- a/Assets/Scripts/Assembly-CSharp/BlockFloopTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/BlockFloopTarget.cs
+@@ -111,7 +111,7 @@ public class BlockFloopTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_BLOCK_FLOOP"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/BlockTargetFloop.cs b/Assets/Scripts/Assembly-CSharp/BlockTargetFloop.cs
+index d9901c51..4d6f0de1 100644
+--- a/Assets/Scripts/Assembly-CSharp/BlockTargetFloop.cs
++++ b/Assets/Scripts/Assembly-CSharp/BlockTargetFloop.cs
+@@ -109,7 +109,7 @@ public class BlockTargetFloop : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/BonusATKTarget.cs b/Assets/Scripts/Assembly-CSharp/BonusATKTarget.cs
+index 81b9419f..41d62b9e 100644
+--- a/Assets/Scripts/Assembly-CSharp/BonusATKTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/BonusATKTarget.cs
+@@ -52,7 +52,7 @@ public class BonusATKTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_BOOST_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/BonusDEFTarget.cs b/Assets/Scripts/Assembly-CSharp/BonusDEFTarget.cs
+index 025a594a..d7c418cc 100644
+--- a/Assets/Scripts/Assembly-CSharp/BonusDEFTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/BonusDEFTarget.cs
+@@ -52,7 +52,7 @@ public class BonusDEFTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_BOOST_DEFENSE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/CWBattleEndCameraSwitch.cs b/Assets/Scripts/Assembly-CSharp/CWBattleEndCameraSwitch.cs
+index c427ff1b..b70a484a 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWBattleEndCameraSwitch.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWBattleEndCameraSwitch.cs
+@@ -36,6 +36,10 @@ public class CWBattleEndCameraSwitch : MonoBehaviour
+ 
+ 	private void OnClick()
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		if (disableCameras != null)
+ 		{
+ 			Camera[] array = disableCameras;
+diff --git a/Assets/Scripts/Assembly-CSharp/CWBattleIntroController.cs b/Assets/Scripts/Assembly-CSharp/CWBattleIntroController.cs
+index 80376f1d..8c0437af 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWBattleIntroController.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWBattleIntroController.cs
+@@ -161,6 +161,14 @@ public class CWBattleIntroController : MonoBehaviour
+ 		AnimationClip[] array = introCameraClips;
+ 		foreach (AnimationClip clip in array)
+ 		{
++			if (ARBattleRig.Active)
++			{
++				// AR: the phone is the camera, so skip the intro shots but keep their timing for the banners.
++				StartCoroutine(TriggerBannerTween(count, clip.length));
++				yield return new WaitForSeconds(clip.length);
++				count++;
++				continue;
++			}
+ 			anim.Play(clip.name);
+ 			tweenStartedFlag = false;
+ 			while (anim.isPlaying)
+diff --git a/Assets/Scripts/Assembly-CSharp/CWBattleSequenceController.cs b/Assets/Scripts/Assembly-CSharp/CWBattleSequenceController.cs
+index 534b88f6..7b78e483 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWBattleSequenceController.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWBattleSequenceController.cs
+@@ -149,6 +149,19 @@ public class CWBattleSequenceController : MonoBehaviour
+ 
+ 	public int roundLimit = 1000000;
+ 
++	// Versus: whether the attack being resolved is a critical hit, the same on both phones.
++	private bool attackCrit;
++
++	// A critical hit multiplies the attack's damage. In versus it is the attacker's ring that decides, on
++	// both phones; otherwise the local ring, as before.
++	public bool CritHit
++	{
++		get
++		{
++			return VersusMatch.Active ? attackCrit : (result == "Crit");
++		}
++	}
++
+ 	public float realTime
+ 	{
+ 		get
+@@ -180,6 +193,12 @@ public class CWBattleSequenceController : MonoBehaviour
+ 
+ 	private void SplitCameraEnable(bool enable)
+ 	{
++		if (ARBattleRig.Active)
++		{
++			// AR: no split screen, the phone camera stays on and HP bars keep facing it.
++			camAlignFlag = false;
++			return;
++		}
+ 		camAlignFlag = enable;
+ 		Camera component = battleCamP1.GetComponent<Camera>();
+ 		Camera component2 = battleCamP2.GetComponent<Camera>();
+@@ -243,7 +262,9 @@ public class CWBattleSequenceController : MonoBehaviour
+ 				{
+ 					yield return null;
+ 				}
+-				lane = ((phaseMgr.Phase != BattlePhase.P1Battle) ? (3 - j) : j);
++				// Versus: each player's creatures attack in the order of their own lanes on both phones.
++				lane = ((VersusMatch.Active || phaseMgr.Phase == BattlePhase.P1Battle) ? j : (3 - j));
++				attackCrit = false;
+ 				if (prevPerfEvent != 0)
+ 				{
+ 					PerfThrottleManager.HandlePerfThrottleEvent(prevPerfEvent, false);
+@@ -281,9 +302,14 @@ public class CWBattleSequenceController : MonoBehaviour
+ 						forceCrit = false;
+ 					}
+ 				}
+-				if (PlayerInfoScript.GetInstance().AutoBattleSetting)
++				if (VersusMatch.IsRemote(player))
++				{
++					yield return StartCoroutine(RemoteRing());
++				}
++				else if (PlayerInfoScript.GetInstance().AutoBattleSetting)
+ 				{
+ 					result = ((phaseMgr.Phase != BattlePhase.P1Battle) ? "Miss" : "Hit");
++					VersusMatch.SendRing(lane, result);
+ 					UpdateBattleCamera();
+ 					yield return StartCoroutine(BattleAction());
+ 				}
+@@ -298,6 +324,31 @@ public class CWBattleSequenceController : MonoBehaviour
+ 		yield return StartCoroutine(BattleEnd(false));
+ 	}
+ 
++	// Versus, the rival attacks: its phone plays the ring and sends the result. Same waits as a local ring,
++	// then the attacker's result told the way this side's tweens expect it: a hit lands, a miss is blocked.
++	private IEnumerator RemoteRing()
++	{
++		while (BattleManagerScript.GetInstance().BattlePaused)
++		{
++			yield return null;
++		}
++		timeOutFlag = false;
++		ResetTimerVariables();
++		UpdateBattleCamera();
++		yield return new WaitForSeconds(1f);
++		string attack;
++		while (!VersusMatch.TryTakeRing(lane, out attack))
++		{
++			yield return null;
++		}
++		float? critDamageMod = GameInstance.GetDeck(PlayerType.Opponent).Leader.Form.CritDamageMod;
++		damageModifierCrit = critDamageMod.Value;
++		result = (attack == "Miss") ? "Hit" : "Miss";
++		attackCrit = attack == "Crit";
++		yield return new WaitForSeconds(0.5f);
++		yield return StartCoroutine(BattleAction());
++	}
++
+ 	private void DebugRingStart()
+ 	{
+ 		StartCoroutine(RingStart());
+@@ -337,7 +388,7 @@ public class CWBattleSequenceController : MonoBehaviour
+ 	{
+ 		while (!_keyPressed)
+ 		{
+-			if (Input.GetMouseButtonDown(0))
++			if (Input.GetMouseButtonDown(0) || VersusTestBot.TapRing())
+ 			{
+ 				yield return StartCoroutine(StopRing());
+ 				break;
+@@ -352,6 +403,7 @@ public class CWBattleSequenceController : MonoBehaviour
+ 
+ 	public IEnumerator BattleEnd(bool GameOver)
+ 	{
++		attackCrit = false;
+ 		yield return null;
+ 		Time.timeScale = 1f;
+ 		StopAllCoroutines();
+@@ -523,6 +575,8 @@ public class CWBattleSequenceController : MonoBehaviour
+ 		{
+ 			result = "Miss";
+ 		}
++		VersusMatch.SendRing(lane, result);
++		attackCrit = result == "Crit";
+ 		GetTweenTarget(result).SendMessage("OnClick", SendMessageOptions.DontRequireReceiver);
+ 		animateFlag = false;
+ 		yield return new WaitForSeconds(0.3f);
+@@ -714,6 +768,10 @@ public class CWBattleSequenceController : MonoBehaviour
+ 
+ 	private void UpdateBattleCamera()
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		int laneIndex = ((player != PlayerType.User) ? (3 - lane) : lane);
+ 		battleCamScriptP1.MoveBattleCameraSplitScreen(laneIndex);
+ 		battleCamScriptP2.MoveBattleCameraSplitScreen(laneIndex);
+diff --git a/Assets/Scripts/Assembly-CSharp/CWDiscardCard.cs b/Assets/Scripts/Assembly-CSharp/CWDiscardCard.cs
+index b33ebc82..b3ac570d 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWDiscardCard.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWDiscardCard.cs
+@@ -85,6 +85,10 @@ public class CWDiscardCard : MonoBehaviour
+ 	{
+ 		if (filterScript != null && !filterScript.CardSelected)
+ 		{
++			if ((int)filterScript.Owner == (int)PlayerType.User)
++			{
++				VersusMatch.SendPick(filterScript, card);
++			}
+ 			filterScript.CardSelection(card);
+ 		}
+ 	}
+diff --git a/Assets/Scripts/Assembly-CSharp/CWFloopActionManager.cs b/Assets/Scripts/Assembly-CSharp/CWFloopActionManager.cs
+index c7484283..e1f34cf3 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWFloopActionManager.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWFloopActionManager.cs
+@@ -117,6 +117,10 @@ public class CWFloopActionManager : MonoBehaviour
+ 
+ 	public IEnumerator PlayFloopAction()
+ 	{
++		if (player == (int)PlayerType.User)
++		{
++			VersusMatch.SendFloop(lane);
++		}
+ 		GameObject target = creatureMgr.Spawn_Points[player, lane, 0].gameObject;
+ 		FillFloopInfo();
+ 		FloopCameraTrigger(target, false);
+@@ -798,7 +802,10 @@ public class CWFloopActionManager : MonoBehaviour
+ 	{
+ 		if (BattleCamera != null)
+ 		{
+-			BattleCamera.transform.position = location.position;
++			if (!ARBattleRig.Active)
++			{
++				BattleCamera.transform.position = location.position;
++			}
+ 			if (floopCam != null)
+ 			{
+ 				floopCam.gameObject.SetActive(false);
+@@ -815,6 +822,10 @@ public class CWFloopActionManager : MonoBehaviour
+ 
+ 	public void TriggerLeader(PlayerType player)
+ 	{
++		if ((int)player == (int)PlayerType.User)
++		{
++			VersusMatch.SendLeader();
++		}
+ 		StartCoroutine(DelayTriggerLeader(player));
+ 	}
+ 
+diff --git a/Assets/Scripts/Assembly-CSharp/CWHaloFaceCam.cs b/Assets/Scripts/Assembly-CSharp/CWHaloFaceCam.cs
+index d2c7db4e..67d5b1cd 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWHaloFaceCam.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWHaloFaceCam.cs
+@@ -26,7 +26,7 @@ public class CWHaloFaceCam : MonoBehaviour
+ 	private void Update()
+ 	{
+ 		base.transform.LookAt(base.transform.position + gameCamera.transform.rotation * Vector3.back, gameCamera.transform.rotation * Vector3.up);
+-		if (phaseMgr.Phase == BattlePhase.P1Battle || phaseMgr.Phase == BattlePhase.P2Battle)
++		if (!ARBattleRig.Active && (phaseMgr.Phase == BattlePhase.P1Battle || phaseMgr.Phase == BattlePhase.P2Battle))
+ 		{
+ 			gameCamera = battleCamera;
+ 		}
+diff --git a/Assets/Scripts/Assembly-CSharp/CWKetchupBottleScript.cs b/Assets/Scripts/Assembly-CSharp/CWKetchupBottleScript.cs
+index aedf148a..e3c7bdd3 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWKetchupBottleScript.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWKetchupBottleScript.cs
+@@ -116,6 +116,10 @@ public class CWKetchupBottleScript : MonoBehaviour
+ 
+ 	public void SetSpinFlag()
+ 	{
++		if (!VersusMatch.RemoteLandscapesReady)
++		{
++			return;
++		}
+ 		SpinSpeed = 50f;
+ 		GetComponent<Rigidbody>().angularVelocity = new Vector3(GetComponent<Rigidbody>().angularVelocity.x, 150f + UnityEngine.Random.value * 50f * (float)((!(UnityEngine.Random.value > 0.5f)) ? 1 : (-1)), GetComponent<Rigidbody>().angularVelocity.z);
+ 		Spin = true;
+@@ -152,6 +156,11 @@ public class CWKetchupBottleScript : MonoBehaviour
+ 		{
+ 			forceStartingPlayer = DebugFlagsScript.GetInstance().forceStartingPlayer;
+ 		}
++		if (VersusMatch.Active)
++		{
++			// Versus: who starts comes from the shared seed; the bottle is steered to point there.
++			forceStartingPlayer = (((int)VersusMatch.FirstPlayer == (int)PlayerType.User) ? DebugFlagsScript.ForceStartingPlayer.Me : DebugFlagsScript.ForceStartingPlayer.Them);
++		}
+ 		if (forceStartingPlayer != 0 && Mathf.Abs(GetComponent<Rigidbody>().angularVelocity.y) <= FORCE_ANGULAR_VELOCITY)
+ 		{
+ 			bool flag = DeterminePlayer(base.transform.eulerAngles.y);
+@@ -218,6 +227,10 @@ public class CWKetchupBottleScript : MonoBehaviour
+ 
+ 	private void SetupFirstPlayer(PlayerType player)
+ 	{
++		if (VersusMatch.Active)
++		{
++			player = VersusMatch.FirstPlayer;
++		}
+ 		if (GlobalFlags.Instance.InMPMode)
+ 		{
+ 			whoGoesFirstLabel.text = string.Format(KFFLocalization.Get("!!FORMAT_PLAYER_GOES_FIRST"), (player != PlayerType.User) ? PlayerInfoScript.GetInstance().MPOpponentName : PlayerInfoScript.GetInstance().MPPlayerName);
+@@ -376,6 +389,10 @@ public class CWKetchupBottleScript : MonoBehaviour
+ 
+ 	private void CheckSpin()
+ 	{
++		if (!VersusMatch.RemoteLandscapesReady)
++		{
++			return;
++		}
+ 		if (Mathf.Abs(GetComponent<Rigidbody>().angularVelocity.y) > MIN_ANGULAR_VELOCITY)
+ 		{
+ 			GetComponent<Rigidbody>().angularVelocity = new Vector3(GetComponent<Rigidbody>().angularVelocity.x, (GetComponent<Rigidbody>().angularVelocity.y + UnityEngine.Random.value * ANGULAR_RANDOMNESS * (float)((GetComponent<Rigidbody>().angularVelocity.y > 0f) ? 1 : (-1))) * ANGULAR_VELOCITY_SCALE, GetComponent<Rigidbody>().angularVelocity.z);
+diff --git a/Assets/Scripts/Assembly-CSharp/CWList.cs b/Assets/Scripts/Assembly-CSharp/CWList.cs
+index 1e31c070..ad70f3bf 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWList.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWList.cs
+@@ -12,4 +12,14 @@ public class CWList<T> : List<T>
+ 		int index = Random.Range(0, Count);
+ 		return this[index];
+ 	}
++
++	// Battle pick: in a versus match it draws from the owner's seeded stream (VersusRandom).
++	public T RandomItem(PlayerType owner)
++	{
++		if (Count <= 0)
++		{
++			return default(T);
++		}
++		return this[VersusRandom.Range(owner, 0, Count)];
++	}
+ }
+diff --git a/Assets/Scripts/Assembly-CSharp/CWLoadLevelForBattle.cs b/Assets/Scripts/Assembly-CSharp/CWLoadLevelForBattle.cs
+index 4daa146f..0ecb1928 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWLoadLevelForBattle.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWLoadLevelForBattle.cs
+@@ -72,6 +72,7 @@ public class CWLoadLevelForBattle : MonoBehaviour
+ 		{
+ 			levelObj = Instantiate(original);
+ 			levelObj.transform.parent = EnvironmentParentTr;
++			ARBattleRig.Hide(levelObj);
+ 			return true;
+ 		}
+ 		return false;
+diff --git a/Assets/Scripts/Assembly-CSharp/CWOpponentActionSequencer.cs b/Assets/Scripts/Assembly-CSharp/CWOpponentActionSequencer.cs
+index 42914bd7..8c16dcf2 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWOpponentActionSequencer.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWOpponentActionSequencer.cs
+@@ -51,6 +51,11 @@ public class CWOpponentActionSequencer : MonoBehaviour
+ 
+ 	public IEnumerator StartOpponentSequence()
+ 	{
++		if (VersusMatch.Active)
++		{
++			yield return StartCoroutine(RemoteSequence());
++			yield break;
++		}
+ 		Deck deck = GameInstance.GetDeck(PlayerType.Opponent);
+ 		bool AIReshuffle = GameInstance.ActiveQuest.AIReshuffle;
+ 		if (deck.CardCount() == 0 && AIReshuffle)
+@@ -68,6 +73,31 @@ public class CWOpponentActionSequencer : MonoBehaviour
+ 		NextPhase();
+ 	}
+ 
++	// Versus: the rival's moves come over the network instead of from the AI, one by one until it ends its turn.
++	private IEnumerator RemoteSequence()
++	{
++		while (true)
++		{
++			VersusMatch.RemoteAction action = VersusMatch.NextRemoteAction();
++			if (action == null)
++			{
++				yield return null;
++				continue;
++			}
++			if (action.Kind == "END")
++			{
++				break;
++			}
++			AIDecision decision = new AIDecision();
++			decision.IsLeaderAbility = action.Kind == "LEADER";
++			decision.IsFloop = action.Kind == "FLOOP";
++			decision.CardChoice = action.Card;
++			decision.LaneChoice = action.Lane;
++			yield return StartCoroutine(ExecuteDecision(decision));
++		}
++		NextPhase();
++	}
++
+ 	private IEnumerator ExecuteDecision(AIDecision Decision)
+ 	{
+ 		phaseMgr.Phase = BattlePhase.P2Setup;
+diff --git a/Assets/Scripts/Assembly-CSharp/CWP1SetupBranch.cs b/Assets/Scripts/Assembly-CSharp/CWP1SetupBranch.cs
+index 46785d1c..04528cc6 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWP1SetupBranch.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWP1SetupBranch.cs
+@@ -38,6 +38,15 @@ public class CWP1SetupBranch : MonoBehaviour
+ 
+ 	public void Advance()
+ 	{
++		if (VersusMatch.Active)
++		{
++			// Once per turn: a second tap must not end the rival's simulation of the next turn too.
++			if (phaseMgr.Phase != BattlePhase.P1Setup)
++			{
++				return;
++			}
++			VersusMatch.SendEnd();
++		}
+ 		if (GameDataScript.GetInstance().Turn <= 1)
+ 		{
+ 			BattleManagerScript.GetInstance().P1BattleFinished();
+diff --git a/Assets/Scripts/Assembly-CSharp/CWPlayerHandsController.cs b/Assets/Scripts/Assembly-CSharp/CWPlayerHandsController.cs
+index 178dc9b1..7fd60499 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWPlayerHandsController.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWPlayerHandsController.cs
+@@ -256,6 +256,7 @@ public class CWPlayerHandsController : MonoBehaviour
+ 			TutorialMonitor.Instance.HidePlayersFirstTurnLabel();
+ 			if (currentCard.Form.Type == CardType.Spell)
+ 			{
++				VersusMatch.SendPlay(card, -1);
+ 				TriggerSpell(PlayerType.User, card);
+ 			}
+ 			else if (!GameInstance.LaneHasCard(PlayerType.User, lane, currentCard.Form.Type))
+@@ -311,6 +312,7 @@ public class CWPlayerHandsController : MonoBehaviour
+ 
+ 	public void Summon(int lane, CardItem card)
+ 	{
++		VersusMatch.SendPlay(card, lane);
+ 		cardMgr.CardSelected = false;
+ 		GameInstance.Summon(PlayerType.User, lane, card);
+ 	}
+diff --git a/Assets/Scripts/Assembly-CSharp/CWTBDragToMove.cs b/Assets/Scripts/Assembly-CSharp/CWTBDragToMove.cs
+index aafa620e..c1a7a0a6 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWTBDragToMove.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWTBDragToMove.cs
+@@ -507,6 +507,10 @@ public class CWTBDragToMove : MonoBehaviour
+ 
+ 	private bool checkReleasePoint(Vector2 gesturePos, BoxCollider col)
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return ARBattleRig.LaneContainsTouch(GameCamera, gesturePos, col);
++		}
+ 		bool flag = col.enabled;
+ 		col.enabled = true;
+ 		Vector3 position = new Vector3(col.bounds.max.x, 0f, col.bounds.max.z);
+diff --git a/Assets/Scripts/Assembly-CSharp/CWiTweenBattleCam.cs b/Assets/Scripts/Assembly-CSharp/CWiTweenBattleCam.cs
+index 027651bb..8fd36f67 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWiTweenBattleCam.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWiTweenBattleCam.cs
+@@ -56,6 +56,10 @@ public class CWiTweenBattleCam : MonoBehaviour
+ 
+ 	private void NotCutToBattleCamera()
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		iTween.Stop(gameCamera);
+ 		iTween.Stop(gameCameraTarget);
+ 		PlayerType playerType = ((phaseMgr.Phase != BattlePhase.P1Battle) ? PlayerType.Opponent : PlayerType.User);
+@@ -80,6 +84,10 @@ public class CWiTweenBattleCam : MonoBehaviour
+ 
+ 	private void CutToBattleCamera()
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		iTween.Stop(gameCamera);
+ 		iTween.Stop(gameCameraTarget);
+ 		PlayerType playerType = ((phaseMgr.Phase != BattlePhase.P1Battle) ? PlayerType.Opponent : PlayerType.User);
+@@ -96,6 +104,10 @@ public class CWiTweenBattleCam : MonoBehaviour
+ 
+ 	public void MoveBattleCamera(int laneIndex)
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		transformTo = null;
+ 		transformTargetTo = null;
+ 		PlayerType playerType = ((phaseMgr.Phase != BattlePhase.P1Battle) ? PlayerType.Opponent : PlayerType.User);
+diff --git a/Assets/Scripts/Assembly-CSharp/CWiTweenCamTrigger.cs b/Assets/Scripts/Assembly-CSharp/CWiTweenCamTrigger.cs
+index a2c87c3e..45938e38 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWiTweenCamTrigger.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWiTweenCamTrigger.cs
+@@ -51,6 +51,10 @@ public class CWiTweenCamTrigger : MonoBehaviour
+ 
+ 	public void PlayCam()
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		Initialize();
+ 		if (gameCamera != null && tweenName != string.Empty)
+ 		{
+diff --git a/Assets/Scripts/Assembly-CSharp/CWiTweenVantageCam.cs b/Assets/Scripts/Assembly-CSharp/CWiTweenVantageCam.cs
+index b856f15c..0815ca5b 100644
+--- a/Assets/Scripts/Assembly-CSharp/CWiTweenVantageCam.cs
++++ b/Assets/Scripts/Assembly-CSharp/CWiTweenVantageCam.cs
+@@ -68,6 +68,10 @@ public class CWiTweenVantageCam : MonoBehaviour
+ 
+ 	public void CreatureSpawnCamera(PlayerType player)
+ 	{
++		if (ARBattleRig.Active)
++		{
++			return;
++		}
+ 		iTween.StopByName(gameCamera, "ToP2Setup");
+ 		CardScript summoningCard = GetSummoningCard(player);
+ 		SetCamTargets(summoningCard, player, currentCardLane);
+diff --git a/Assets/Scripts/Assembly-CSharp/CardScript.cs b/Assets/Scripts/Assembly-CSharp/CardScript.cs
+index 10edcb9b..53d498e6 100644
+--- a/Assets/Scripts/Assembly-CSharp/CardScript.cs
++++ b/Assets/Scripts/Assembly-CSharp/CardScript.cs
+@@ -46,6 +46,16 @@ public class CardScript
+ 
+ 	public PlayerType Owner { get; set; }
+ 
++	// The owner picks targets and cards by hand: always the local player, and in a versus match also the
++	// rival, whose picks arrive by network instead of coming from the AI.
++	protected bool ChoosesByHand
++	{
++		get
++		{
++			return (int)Owner == (int)PlayerType.User || VersusMatch.Active;
++		}
++	}
++
+ 	public bool Flooped { get; set; }
+ 
+ 	public bool Flooping { get; set; }
+@@ -246,6 +256,11 @@ public class CardScript
+ 
+ 	protected void StartTargetSelection(PlayerType player, SelectionType targetType, string instruction)
+ 	{
++		if (VersusMatch.IsRemote(Owner))
++		{
++			StartRemoteTargetSelection(player);
++			return;
++		}
+ 		UICamera.useInputEnabler = false;
+ 		Flooping = true;
+ 		GameState instance = GameState.Instance;
+@@ -274,6 +289,28 @@ public class CardScript
+ 		}
+ 	}
+ 
++	// The rival picks on its own phone: no highlights or input here, the pick comes with its next message.
++	private void StartRemoteTargetSelection(PlayerType player)
++	{
++		Flooping = true;
++		GameState instance = GameState.Instance;
++		bool flag = false;
++		for (int i = 0; i < 4; i++)
++		{
++			if (SelectionFilter(instance.GetLane(player, i)))
++			{
++				flag = true;
++			}
++		}
++		instance.SetTargetingListener(player, this);
++		if (!flag)
++		{
++			EndTargetSelection();
++			return;
++		}
++		VersusMatch.AwaitRemoteTarget(this);
++	}
++
+ 	protected CWList<Lane> AITargetSelection(PlayerType player, SelectionType targetType)
+ 	{
+ 		CWList<Lane> cWList = new CWList<Lane>();
+@@ -307,6 +344,12 @@ public class CardScript
+ 
+ 	public void OpenDiscardPile()
+ 	{
++		if (VersusMatch.IsRemote(Owner))
++		{
++			CardSelected = false;
++			VersusMatch.AwaitRemotePick(this);
++			return;
++		}
+ 		UICamera.useInputEnabler = false;
+ 		CWDiscardPileSet instance = CWDiscardPileSet.GetInstance(Owner);
+ 		UIButtonTween component = instance.gameObject.GetComponent<UIButtonTween>();
+@@ -331,6 +374,11 @@ public class CardScript
+ 
+ 	public void CloseDiscardPile()
+ 	{
++		if (VersusMatch.IsRemote(Owner))
++		{
++			CardSelected = true;
++			return;
++		}
+ 		CWDiscardPileSet instance = CWDiscardPileSet.GetInstance(Owner);
+ 		UIButtonTween component = instance.gameObject.GetComponent<UIButtonTween>();
+ 		GameObject tweenTarget = component.tweenTarget;
+diff --git a/Assets/Scripts/Assembly-CSharp/CreatureBattleScript.cs b/Assets/Scripts/Assembly-CSharp/CreatureBattleScript.cs
+index 969dd1dc..2542622c 100644
+--- a/Assets/Scripts/Assembly-CSharp/CreatureBattleScript.cs
++++ b/Assets/Scripts/Assembly-CSharp/CreatureBattleScript.cs
+@@ -84,7 +84,7 @@ public class CreatureBattleScript : MonoBehaviour
+ 			}
+ 			CWBattleSequenceController instance = CWBattleSequenceController.GetInstance();
+ 			BattlePhaseManager instance2 = BattlePhaseManager.GetInstance();
+-			if (instance.result == "Crit" && instance2.Phase == BattlePhase.P1Battle)
++			if (VersusMatch.Active ? instance.CritHit : (instance.result == "Crit" && instance2.Phase == BattlePhase.P1Battle))
+ 			{
+ 				aTK = (int)((float)aTK * instance.damageModifierCrit);
+ 			}
+@@ -315,7 +315,8 @@ public class CreatureBattleScript : MonoBehaviour
+ 		VOManager.Instance.PlayEvent(Player, VOEvent.CreatureDestroyed);
+ 		VOManager.Instance.PlayEvent(!Player, VOEvent.DestroyCreature);
+ 		tombStoneScript.tombStone = panelMgr.tombstoneObjs[(int)PlayerType.Opponent];
+-		if (Player == PlayerType.Opponent && !QuestEarningManager.GetInstance().dropedThisBattle)
++		// No loot in a versus match.
++		if (Player == PlayerType.Opponent && !QuestEarningManager.GetInstance().dropedThisBattle && !VersusMatch.Active)
+ 		{
+ 			QuestData qd = GameState.Instance.ActiveQuest;
+ 			bool dropCard = CanDropCard() || DebugFlagsScript.GetInstance().battleDisplay.forceLootDrop;
+diff --git a/Assets/Scripts/Assembly-CSharp/DEFBonusRandom.cs b/Assets/Scripts/Assembly-CSharp/DEFBonusRandom.cs
+index ed4fa7eb..e2d8d8b3 100644
+--- a/Assets/Scripts/Assembly-CSharp/DEFBonusRandom.cs
++++ b/Assets/Scripts/Assembly-CSharp/DEFBonusRandom.cs
+@@ -52,7 +52,7 @@ public class DEFBonusRandom : CreatureScript
+ 				cWList.Add(creature2);
+ 			}
+ 		}
+-		TargetList.Add(cWList.RandomItem());
++		TargetList.Add(cWList.RandomItem(base.Owner));
+ 		DoEffect();
+ 	}
+ 
+diff --git a/Assets/Scripts/Assembly-CSharp/DamageRandom.cs b/Assets/Scripts/Assembly-CSharp/DamageRandom.cs
+index e607629c..02d072ca 100644
+--- a/Assets/Scripts/Assembly-CSharp/DamageRandom.cs
++++ b/Assets/Scripts/Assembly-CSharp/DamageRandom.cs
+@@ -53,7 +53,7 @@ public class DamageRandom : CreatureScript
+ 				cWList.Add(creature2);
+ 			}
+ 		}
+-		TargetList.Add(cWList.RandomItem());
++		TargetList.Add(cWList.RandomItem(base.Owner));
+ 		DoEffect();
+ 	}
+ 
+diff --git a/Assets/Scripts/Assembly-CSharp/DamageTarget.cs b/Assets/Scripts/Assembly-CSharp/DamageTarget.cs
+index f41a1b8e..cadab918 100644
+--- a/Assets/Scripts/Assembly-CSharp/DamageTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/DamageTarget.cs
+@@ -54,7 +54,7 @@ public class DamageTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DamageTargetFaction.cs b/Assets/Scripts/Assembly-CSharp/DamageTargetFaction.cs
+index a492893c..892c0049 100644
+--- a/Assets/Scripts/Assembly-CSharp/DamageTargetFaction.cs
++++ b/Assets/Scripts/Assembly-CSharp/DamageTargetFaction.cs
+@@ -54,7 +54,7 @@ public class DamageTargetFaction : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DamageTargetHealSelf.cs b/Assets/Scripts/Assembly-CSharp/DamageTargetHealSelf.cs
+index dcf1943c..5a3abc7a 100644
+--- a/Assets/Scripts/Assembly-CSharp/DamageTargetHealSelf.cs
++++ b/Assets/Scripts/Assembly-CSharp/DamageTargetHealSelf.cs
+@@ -60,7 +60,7 @@ public class DamageTargetHealSelf : CreatureScript
+ 	{
+ 		if (base.GameInstance.HasCreaturesInPlay(!base.Owner))
+ 		{
+-			if (base.Owner == PlayerType.User)
++			if (ChoosesByHand)
+ 			{
+ 				StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 				return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DamageToATK.cs b/Assets/Scripts/Assembly-CSharp/DamageToATK.cs
+index 7dd86a72..bb41a0c5 100644
+--- a/Assets/Scripts/Assembly-CSharp/DamageToATK.cs
++++ b/Assets/Scripts/Assembly-CSharp/DamageToATK.cs
+@@ -146,7 +146,7 @@ public class DamageToATK : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/Deck.cs b/Assets/Scripts/Assembly-CSharp/Deck.cs
+index 35394130..3de496f3 100644
+--- a/Assets/Scripts/Assembly-CSharp/Deck.cs
++++ b/Assets/Scripts/Assembly-CSharp/Deck.cs
+@@ -236,6 +236,19 @@ public class Deck
+ 		}
+ 	}
+ 
++	// Battle shuffle: in a versus match it draws from the owner's seeded stream (VersusRandom).
++	public void Shuffle(PlayerType owner)
++	{
++		for (int num = Cards.Count * 7; num > 0; num--)
++		{
++			int index = VersusRandom.Range(owner, 0, Cards.Count);
++			int index2 = VersusRandom.Range(owner, 0, Cards.Count);
++			CardItem value = Cards[index];
++			Cards[index] = Cards[index2];
++			Cards[index2] = value;
++		}
++	}
++
+ 	public void ShuffleLandscapes()
+ 	{
+ 		for (int num = LandscapeCount * 7; num > 0; num--)
+diff --git a/Assets/Scripts/Assembly-CSharp/DestroyBuilding.cs b/Assets/Scripts/Assembly-CSharp/DestroyBuilding.cs
+index af620a5b..80e1d74e 100644
+--- a/Assets/Scripts/Assembly-CSharp/DestroyBuilding.cs
++++ b/Assets/Scripts/Assembly-CSharp/DestroyBuilding.cs
+@@ -68,7 +68,7 @@ public class DestroyBuilding : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Building, KFFLocalization.Get("!!PICK_A_BUILDING"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DestroyBuildingLane.cs b/Assets/Scripts/Assembly-CSharp/DestroyBuildingLane.cs
+index 06d5e70f..9284483e 100644
+--- a/Assets/Scripts/Assembly-CSharp/DestroyBuildingLane.cs
++++ b/Assets/Scripts/Assembly-CSharp/DestroyBuildingLane.cs
+@@ -114,7 +114,7 @@ public class DestroyBuildingLane : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Landscape, KFFLocalization.Get("!!PICK_A_TARGET"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DestroyEntityForAction.cs b/Assets/Scripts/Assembly-CSharp/DestroyEntityForAction.cs
+index 7b6c720f..49409a3b 100644
+--- a/Assets/Scripts/Assembly-CSharp/DestroyEntityForAction.cs
++++ b/Assets/Scripts/Assembly-CSharp/DestroyEntityForAction.cs
+@@ -93,7 +93,7 @@ public class DestroyEntityForAction : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, (SelectionType)base.Data.Form.BaseVal1, KFFLocalization.Get("!!PICK_A_SACRIFICE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DestroyEntityForCards.cs b/Assets/Scripts/Assembly-CSharp/DestroyEntityForCards.cs
+index 3513d3da..139e9f2b 100644
+--- a/Assets/Scripts/Assembly-CSharp/DestroyEntityForCards.cs
++++ b/Assets/Scripts/Assembly-CSharp/DestroyEntityForCards.cs
+@@ -75,7 +75,7 @@ public class DestroyEntityForCards : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, (SelectionType)base.Data.Form.BaseVal1, KFFLocalization.Get("!!PICK_A_SACRIFICE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DestroyHighRarityTarget.cs b/Assets/Scripts/Assembly-CSharp/DestroyHighRarityTarget.cs
+index 09b0325e..0dcd61c3 100644
+--- a/Assets/Scripts/Assembly-CSharp/DestroyHighRarityTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/DestroyHighRarityTarget.cs
+@@ -73,7 +73,7 @@ public class DestroyHighRarityTarget : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DisableLane.cs b/Assets/Scripts/Assembly-CSharp/DisableLane.cs
+index 2f7c8cbb..6956b5c8 100644
+--- a/Assets/Scripts/Assembly-CSharp/DisableLane.cs
++++ b/Assets/Scripts/Assembly-CSharp/DisableLane.cs
+@@ -101,7 +101,7 @@ public class DisableLane : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/DoubleDamage.cs b/Assets/Scripts/Assembly-CSharp/DoubleDamage.cs
+index 1a3a76b8..17a3092a 100644
+--- a/Assets/Scripts/Assembly-CSharp/DoubleDamage.cs
++++ b/Assets/Scripts/Assembly-CSharp/DoubleDamage.cs
+@@ -74,7 +74,7 @@ public class DoubleDamage : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/FloopAdjacent.cs b/Assets/Scripts/Assembly-CSharp/FloopAdjacent.cs
+index 18404654..9eb73d8e 100644
+--- a/Assets/Scripts/Assembly-CSharp/FloopAdjacent.cs
++++ b/Assets/Scripts/Assembly-CSharp/FloopAdjacent.cs
+@@ -79,7 +79,7 @@ public class FloopAdjacent : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_FLOOP"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/GameState.cs b/Assets/Scripts/Assembly-CSharp/GameState.cs
+index affee8ed..1f3526dc 100644
+--- a/Assets/Scripts/Assembly-CSharp/GameState.cs
++++ b/Assets/Scripts/Assembly-CSharp/GameState.cs
+@@ -396,7 +396,7 @@ public class GameState
+ 		CreatureManagerScript.GetInstance().SetupUniqueListForPool();
+ 		LandscapeManagerScript.GetInstance().PoolLandscape();
+ 		Deck deck2 = Decks[(int)PlayerType.User];
+-		deck2.Shuffle();
++		deck2.Shuffle(PlayerType.User);
+ 		Singleton<AnalyticsManager>.Instance.LogQuestStart();
+ 		Singleton<AnalyticsManager>.Instance.LogLeaderEquipped(deck2.Leader.Form.ID, deck2.Leader.Rank);
+ 		Singleton<AnalyticsManager>.Instance.LogDeckEquipped(deck2.GetCards());
+@@ -409,8 +409,12 @@ public class GameState
+ 		}
+ 		SummonedCards[(int)PlayerType.User].Clear();
+ 		deck2 = Decks[(int)PlayerType.Opponent];
+-		deck2.Shuffle();
+-		deck2.ShuffleLandscapes();
++		deck2.Shuffle(PlayerType.Opponent);
++		if (!VersusMatch.Active)
++		{
++			// In a versus match the rival places its own landscapes.
++			deck2.ShuffleLandscapes();
++		}
+ 		LeaderCooldown[(int)PlayerType.Opponent] = deck2.Leader.Form.Cooldown;
+ 		StaticLootList.Clear();
+ 		Hands[(int)PlayerType.Opponent].Clear();
+@@ -473,6 +477,10 @@ public class GameState
+ 
+ 	public void AwardStaticLoot()
+ 	{
++		if (VersusMatch.Active)
++		{
++			return;
++		}
+ 		for (int i = 0; i < 2; i++)
+ 		{
+ 			Discounts[i].Clear();
+@@ -507,7 +515,7 @@ public class GameState
+ 	public void DealDamage(PlayerType player, int damage)
+ 	{
+ 		CWBattleSequenceController cWBattleSequenceController = CWBattleSequenceController.GetInstance();
+-		if (cWBattleSequenceController.result == "Crit")
++		if (cWBattleSequenceController.CritHit)
+ 		{
+ 			damage = (int)((float)damage * cWBattleSequenceController.damageModifierCrit);
+ 		}
+@@ -712,7 +720,7 @@ public class GameState
+ 	public void Reshuffle(PlayerType player)
+ 	{
+ 		Deck deck = Decks[(int)player];
+-		deck.Shuffle();
++		deck.Shuffle(player);
+ 	}
+ 
+ 	public Deck GetDeck(PlayerType player)
+@@ -809,7 +817,7 @@ public class GameState
+ 		}
+ 		if (list2.Count > 0)
+ 		{
+-			num = UnityEngine.Random.Range(0, list2.Count);
++			num = VersusRandom.Range(player, 0, list2.Count);
+ 			cardItem = list2[num];
+ 		}
+ 		if (cardItem != null)
+@@ -1847,6 +1855,15 @@ public class GameState
+ 		LandscapeManager.UnhighlightLandscape(player, lane);
+ 	}
+ 
++	// The side whose lanes the pending selection is choosing from.
++	public PlayerType SelectionSideForVersus
++	{
++		get
++		{
++			return SelectionSide;
++		}
++	}
++
+ 	public void SetTargetingListener(PlayerType side, CardScript script)
+ 	{
+ 		SelectionSide = side;
+@@ -1855,6 +1872,10 @@ public class GameState
+ 
+ 	public void SelectTarget(int idx)
+ 	{
++		if (TargetingListener != null && (int)TargetingListener.Owner == (int)PlayerType.User)
++		{
++			VersusMatch.SendTarget(idx);
++		}
+ 		Lane lane = GetLane(SelectionSide, idx);
+ 		TargetingListener.OnTargetSelected(lane);
+ 	}
+@@ -1919,6 +1940,10 @@ public class GameState
+ 				TutorialMonitor.Instance.TriggerTutorial(TutorialTrigger.OpponentTurn);
+ 			}
+ 		}
++		else if (VersusMatch.Active)
++		{
++			VersusMatch.ReshuffleOutOfCards(player);
++		}
+ 		else
+ 		{
+ 			phaseMgr = BattlePhaseManager.GetInstance();
+diff --git a/Assets/Scripts/Assembly-CSharp/HealCreature.cs b/Assets/Scripts/Assembly-CSharp/HealCreature.cs
+index b96b3996..c51535d0 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealCreature.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealCreature.cs
+@@ -69,7 +69,7 @@ public class HealCreature : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealCreatureLeader.cs b/Assets/Scripts/Assembly-CSharp/HealCreatureLeader.cs
+index 07b6a97f..c01f590e 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealCreatureLeader.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealCreatureLeader.cs
+@@ -68,7 +68,7 @@ public class HealCreatureLeader : LeaderScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealRandom.cs b/Assets/Scripts/Assembly-CSharp/HealRandom.cs
+index b1fce52e..75c3c77e 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealRandom.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealRandom.cs
+@@ -55,7 +55,7 @@ public class HealRandom : CreatureScript
+ 				}
+ 			}
+ 		}
+-		TargetList.Add(cWList.RandomItem());
++		TargetList.Add(cWList.RandomItem(base.Owner));
+ 		DoEffect();
+ 	}
+ 
+diff --git a/Assets/Scripts/Assembly-CSharp/HealSelfATK.cs b/Assets/Scripts/Assembly-CSharp/HealSelfATK.cs
+index 8220b896..d5c341ef 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealSelfATK.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealSelfATK.cs
+@@ -74,7 +74,7 @@ public class HealSelfATK : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTarget.cs b/Assets/Scripts/Assembly-CSharp/HealTarget.cs
+index 602b1d59..b35aa169 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTarget.cs
+@@ -62,7 +62,7 @@ public class HealTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetAdjacent.cs b/Assets/Scripts/Assembly-CSharp/HealTargetAdjacent.cs
+index cdc86d44..060829bf 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetAdjacent.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetAdjacent.cs
+@@ -98,7 +98,7 @@ public class HealTargetAdjacent : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetAll.cs b/Assets/Scripts/Assembly-CSharp/HealTargetAll.cs
+index a7b50f8d..31464840 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetAll.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetAll.cs
+@@ -61,7 +61,7 @@ public class HealTargetAll : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetBuildings.cs b/Assets/Scripts/Assembly-CSharp/HealTargetBuildings.cs
+index 810d6f22..113ca606 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetBuildings.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetBuildings.cs
+@@ -68,7 +68,7 @@ public class HealTargetBuildings : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetCards.cs b/Assets/Scripts/Assembly-CSharp/HealTargetCards.cs
+index f12a7a5e..d99677d7 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetCards.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetCards.cs
+@@ -68,7 +68,7 @@ public class HealTargetCards : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetCreatures.cs b/Assets/Scripts/Assembly-CSharp/HealTargetCreatures.cs
+index 979975aa..94159e28 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetCreatures.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetCreatures.cs
+@@ -64,7 +64,7 @@ public class HealTargetCreatures : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetFloop.cs b/Assets/Scripts/Assembly-CSharp/HealTargetFloop.cs
+index e5ada891..d4adea1b 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetFloop.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetFloop.cs
+@@ -69,7 +69,7 @@ public class HealTargetFloop : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/HealTargetLandscapes.cs b/Assets/Scripts/Assembly-CSharp/HealTargetLandscapes.cs
+index 7ad4842f..6b349150 100644
+--- a/Assets/Scripts/Assembly-CSharp/HealTargetLandscapes.cs
++++ b/Assets/Scripts/Assembly-CSharp/HealTargetLandscapes.cs
+@@ -64,7 +64,7 @@ public class HealTargetLandscapes : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_HEAL"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/LandscapeReadyButtonScript.cs b/Assets/Scripts/Assembly-CSharp/LandscapeReadyButtonScript.cs
+index d6075126..b73823b7 100644
+--- a/Assets/Scripts/Assembly-CSharp/LandscapeReadyButtonScript.cs
++++ b/Assets/Scripts/Assembly-CSharp/LandscapeReadyButtonScript.cs
+@@ -11,6 +11,13 @@ public class LandscapeReadyButtonScript : MonoBehaviour
+ 
+ 	private void OnClick()
+ 	{
++		if (VersusMatch.Active)
++		{
++			// The rival's landscapes are the ones it places on its phone; they arrive by network.
++			VersusMatch.SendLandscapes();
++			LandscapeManager.UpdateLandscapes();
++			return;
++		}
+ 		LandscapeManager.AssignOpponentLandscapes();
+ 		LandscapeManager.UpdateLandscapes();
+ 	}
+diff --git a/Assets/Scripts/Assembly-CSharp/LowerATKTarget.cs b/Assets/Scripts/Assembly-CSharp/LowerATKTarget.cs
+index 2fe7ef0a..9334193d 100644
+--- a/Assets/Scripts/Assembly-CSharp/LowerATKTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/LowerATKTarget.cs
+@@ -53,7 +53,7 @@ public class LowerATKTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/LowerDEFFloop.cs b/Assets/Scripts/Assembly-CSharp/LowerDEFFloop.cs
+index 38e49c70..e1000d3a 100644
+--- a/Assets/Scripts/Assembly-CSharp/LowerDEFFloop.cs
++++ b/Assets/Scripts/Assembly-CSharp/LowerDEFFloop.cs
+@@ -51,7 +51,7 @@ public class LowerDEFFloop : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/LowerDEFTarget.cs b/Assets/Scripts/Assembly-CSharp/LowerDEFTarget.cs
+index 4e4ff924..a9893e92 100644
+--- a/Assets/Scripts/Assembly-CSharp/LowerDEFTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/LowerDEFTarget.cs
+@@ -53,7 +53,7 @@ public class LowerDEFTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/MoveBuildingOpponent.cs b/Assets/Scripts/Assembly-CSharp/MoveBuildingOpponent.cs
+index cea96aba..214b795c 100644
+--- a/Assets/Scripts/Assembly-CSharp/MoveBuildingOpponent.cs
++++ b/Assets/Scripts/Assembly-CSharp/MoveBuildingOpponent.cs
+@@ -145,7 +145,7 @@ public class MoveBuildingOpponent : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			SelectingBuilding = true;
+ 			StartTargetSelection(!base.Owner, SelectionType.Building, KFFLocalization.Get("!!PICK_A_BUILDING_TO_MOVE"));
+diff --git a/Assets/Scripts/Assembly-CSharp/MoveBuildingSelf.cs b/Assets/Scripts/Assembly-CSharp/MoveBuildingSelf.cs
+index e4eabc44..9ba49981 100644
+--- a/Assets/Scripts/Assembly-CSharp/MoveBuildingSelf.cs
++++ b/Assets/Scripts/Assembly-CSharp/MoveBuildingSelf.cs
+@@ -143,7 +143,7 @@ public class MoveBuildingSelf : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			SelectingBuilding = true;
+ 			StartTargetSelection(base.Owner, SelectionType.Building, KFFLocalization.Get("!!PICK_A_BUILDING_TO_MOVE"));
+diff --git a/Assets/Scripts/Assembly-CSharp/PlayerInfoScript.cs b/Assets/Scripts/Assembly-CSharp/PlayerInfoScript.cs
+index c2e7d761..1ebf3a1a 100644
+--- a/Assets/Scripts/Assembly-CSharp/PlayerInfoScript.cs
++++ b/Assets/Scripts/Assembly-CSharp/PlayerInfoScript.cs
+@@ -403,14 +403,22 @@ public class PlayerInfoScript : MonoBehaviour
+ 		}
+ 	}
+ 
++	// With SQSettings.InfiniteCurrency the balance reads at least this much and spending is ignored.
++	private const int InfiniteCurrencyFloor = 999999;
++
+ 	public int Coins
+ 	{
+ 		get
+ 		{
+-			return decryptValue(mCoins);
++			int coins = decryptValue(mCoins);
++			return SQSettings.InfiniteCurrency ? Math.Max(coins, InfiniteCurrencyFloor) : coins;
+ 		}
+ 		set
+ 		{
++			if (SQSettings.InfiniteCurrency && value < Coins)
++			{
++				return;
++			}
+ 			value = Math.Max(0, value);
+ 			int num = decryptValue(mCoins);
+ 			int num2 = value - num;
+@@ -428,10 +436,15 @@ public class PlayerInfoScript : MonoBehaviour
+ 	{
+ 		get
+ 		{
+-			return decryptValue(mGemStr);
++			int gems = decryptValue(mGemStr);
++			return SQSettings.InfiniteCurrency ? Math.Max(gems, InfiniteCurrencyFloor) : gems;
+ 		}
+ 		set
+ 		{
++			if (SQSettings.InfiniteCurrency && value < Gems)
++			{
++				return;
++			}
+ 			int num = decryptValue(mGemStr);
+ 			int num2 = value - num;
+ 			int num3 = decryptValue(mGemsAccumulated);
+diff --git a/Assets/Scripts/Assembly-CSharp/Polymorph.cs b/Assets/Scripts/Assembly-CSharp/Polymorph.cs
+index f405450c..161132c6 100644
+--- a/Assets/Scripts/Assembly-CSharp/Polymorph.cs
++++ b/Assets/Scripts/Assembly-CSharp/Polymorph.cs
+@@ -139,7 +139,7 @@ public class Polymorph : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/ProtectTarget.cs b/Assets/Scripts/Assembly-CSharp/ProtectTarget.cs
+index 1a61a409..089b95c5 100644
+--- a/Assets/Scripts/Assembly-CSharp/ProtectTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/ProtectTarget.cs
+@@ -81,7 +81,7 @@ public class ProtectTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_PROTECT"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/RaiseDEFFloop.cs b/Assets/Scripts/Assembly-CSharp/RaiseDEFFloop.cs
+index 0758f0a4..b1228789 100644
+--- a/Assets/Scripts/Assembly-CSharp/RaiseDEFFloop.cs
++++ b/Assets/Scripts/Assembly-CSharp/RaiseDEFFloop.cs
+@@ -49,7 +49,7 @@ public class RaiseDEFFloop : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/RandomCard.cs b/Assets/Scripts/Assembly-CSharp/RandomCard.cs
+index cf29ea54..57d1ef8c 100644
+--- a/Assets/Scripts/Assembly-CSharp/RandomCard.cs
++++ b/Assets/Scripts/Assembly-CSharp/RandomCard.cs
+@@ -95,7 +95,7 @@ public class RandomCard : SpellScript
+ 				cWList.Add(item2);
+ 			}
+ 		}
+-		CardItem item = cWList.RandomItem();
++		CardItem item = cWList.RandomItem(base.Owner);
+ 		TakeCard(item);
+ 		return true;
+ 	}
+diff --git a/Assets/Scripts/Assembly-CSharp/RandomDEFBonus.cs b/Assets/Scripts/Assembly-CSharp/RandomDEFBonus.cs
+index f4925a6f..f2ae09ce 100644
+--- a/Assets/Scripts/Assembly-CSharp/RandomDEFBonus.cs
++++ b/Assets/Scripts/Assembly-CSharp/RandomDEFBonus.cs
+@@ -40,7 +40,7 @@ public class RandomDEFBonus : CreatureScript
+ 
+ 	public override bool DoResult(CardScript target)
+ 	{
+-		(target as CreatureScript).DEFMod += Random.Range(base.Data.Val1, base.Data.Val2 + 1);
++		(target as CreatureScript).DEFMod += VersusRandom.Range(base.Owner, base.Data.Val1, base.Data.Val2 + 1);
+ 		return true;
+ 	}
+ }
+diff --git a/Assets/Scripts/Assembly-CSharp/RandomDiscardCard.cs b/Assets/Scripts/Assembly-CSharp/RandomDiscardCard.cs
+index b347690e..66270844 100644
+--- a/Assets/Scripts/Assembly-CSharp/RandomDiscardCard.cs
++++ b/Assets/Scripts/Assembly-CSharp/RandomDiscardCard.cs
+@@ -63,7 +63,7 @@ public class RandomDiscardCard : CreatureScript
+ 	public override void Floop()
+ 	{
+ 		List<CardItem> discardPile = GameState.Instance.GetDiscardPile(base.Owner);
+-		int index = Random.Range(0, discardPile.Count);
++		int index = VersusRandom.Range(base.Owner, 0, discardPile.Count);
+ 		CardItem item = discardPile[index];
+ 		TakeCard(item);
+ 	}
+diff --git a/Assets/Scripts/Assembly-CSharp/ResetTarget.cs b/Assets/Scripts/Assembly-CSharp/ResetTarget.cs
+index 7916649a..98a7d0f3 100644
+--- a/Assets/Scripts/Assembly-CSharp/ResetTarget.cs
++++ b/Assets/Scripts/Assembly-CSharp/ResetTarget.cs
+@@ -65,7 +65,7 @@ public class ResetTarget : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_BOOST_ATTACK"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnCard.cs b/Assets/Scripts/Assembly-CSharp/ReturnCard.cs
+index d12dd5b2..44f97f62 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnCard.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnCard.cs
+@@ -95,7 +95,7 @@ public class ReturnCard : SpellScript
+ 
+ 	public override bool DoResult(CardScript target)
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			OpenDiscardPile();
+ 		}
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnCardLeader.cs b/Assets/Scripts/Assembly-CSharp/ReturnCardLeader.cs
+index 38bd92f4..eb3e1089 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnCardLeader.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnCardLeader.cs
+@@ -85,7 +85,7 @@ public class ReturnCardLeader : LeaderScript
+ 
+ 	public override bool DoResult(CardScript target)
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			OpenDiscardPile();
+ 		}
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnCardTypeLeader.cs b/Assets/Scripts/Assembly-CSharp/ReturnCardTypeLeader.cs
+index ad3b7207..9afa5bc9 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnCardTypeLeader.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnCardTypeLeader.cs
+@@ -102,7 +102,7 @@ public class ReturnCardTypeLeader : LeaderScript
+ 
+ 	public override bool DoResult(CardScript target)
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			OpenDiscardPile();
+ 		}
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnCreature.cs b/Assets/Scripts/Assembly-CSharp/ReturnCreature.cs
+index 70e1efbf..20aaa706 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnCreature.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnCreature.cs
+@@ -63,7 +63,7 @@ public class ReturnCreature : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, "Pick a creature.");
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnDiscardCard.cs b/Assets/Scripts/Assembly-CSharp/ReturnDiscardCard.cs
+index 538da77b..a48e5c24 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnDiscardCard.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnDiscardCard.cs
+@@ -87,7 +87,7 @@ public class ReturnDiscardCard : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			OpenDiscardPile();
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnHandsDrawCardsAddMP.cs b/Assets/Scripts/Assembly-CSharp/ReturnHandsDrawCardsAddMP.cs
+index 3b55f328..142f0696 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnHandsDrawCardsAddMP.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnHandsDrawCardsAddMP.cs
+@@ -41,7 +41,7 @@ public class ReturnHandsDrawCardsAddMP : CreatureScript
+ 			deck.AddCard(newCard);
+ 			hand.RemoveAt(0);
+ 		}
+-		deck.Shuffle();
++		deck.Shuffle(base.Owner);
+ 		for (int i = 0; i < base.Data.Form.BaseVal1; i++)
+ 		{
+ 			base.GameInstance.DrawCard(base.Owner);
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnOpponentCreature.cs b/Assets/Scripts/Assembly-CSharp/ReturnOpponentCreature.cs
+index 8ffe84a9..230e5b57 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnOpponentCreature.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnOpponentCreature.cs
+@@ -63,7 +63,7 @@ public class ReturnOpponentCreature : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/ReturnTargetToHand.cs b/Assets/Scripts/Assembly-CSharp/ReturnTargetToHand.cs
+index eee80308..b4b4e95c 100644
+--- a/Assets/Scripts/Assembly-CSharp/ReturnTargetToHand.cs
++++ b/Assets/Scripts/Assembly-CSharp/ReturnTargetToHand.cs
+@@ -58,7 +58,7 @@ public class ReturnTargetToHand : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, (SelectionType)base.Data.Form.BaseVal1, KFFLocalization.Get("!!PICK_A_TARGET"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/SQSettings.cs b/Assets/Scripts/Assembly-CSharp/SQSettings.cs
+index 418f3d19..7c18f23a 100644
+--- a/Assets/Scripts/Assembly-CSharp/SQSettings.cs
++++ b/Assets/Scripts/Assembly-CSharp/SQSettings.cs
+@@ -22,6 +22,10 @@ public class SQSettings
+ 
+ 	private static bool skipTutorial;
+ 
++	private static bool infiniteCurrency;
++
++	private static bool arMode;
++
+ 	private static bool initialized;
+ 
+ 	private static string bundleIdentifier;
+@@ -108,11 +112,16 @@ public class SQSettings
+ 	}
+ 
+ 	// When true (server_settings.json "offline_mode"), no request is sent to the game server:
+-	// logins, saves, patching and version checks are answered locally.
++	// logins, saves, patching and version checks are answered locally. Reads the settings on first use:
++	// on a fresh install the login screen asks before Session has called Init().
+ 	public static bool OfflineMode
+ 	{
+ 		get
+ 		{
++			if (!initialized)
++			{
++				Init();
++			}
+ 			return offlineMode;
+ 		}
+ 	}
+@@ -130,6 +139,35 @@ public class SQSettings
+ 		}
+ 	}
+ 
++	// server_settings.json "infinite_currency": coins and gems never go down and start at 999,999,
++	// so everything in the store can be bought. Reads the settings on first use.
++	public static bool InfiniteCurrency
++	{
++		get
++		{
++			if (!initialized)
++			{
++				Init();
++			}
++			return infiniteCurrency;
++		}
++	}
++
++	// server_settings.json "ar_mode": the battle board goes on a real table with AR Foundation (ARBattleRig).
++	// Without the key it follows the platform: on for Android and iOS players, off everywhere else
++	// (desktop and the Editor). "ar_mode": false turns it off on a phone. Reads the settings on first use.
++	public static bool ARMode
++	{
++		get
++		{
++			if (!initialized)
++			{
++				Init();
++			}
++			return arMode;
++		}
++	}
++
+ 	public static bool DebugDisplayControllers
+ 	{
+ 		get
+@@ -163,6 +201,8 @@ public class SQSettings
+ 		serverUrl = (string)dictionary["server_url"];
+ 		offlineMode = dictionary.ContainsKey("offline_mode") && (bool)dictionary["offline_mode"];
+ 		skipTutorial = dictionary.ContainsKey("skip_tutorial") && (bool)dictionary["skip_tutorial"];
++		infiniteCurrency = dictionary.ContainsKey("infinite_currency") && (bool)dictionary["infinite_currency"];
++		arMode = dictionary.ContainsKey("ar_mode") ? (bool)dictionary["ar_mode"] : (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer);
+ 		cdnUrl = (string)dictionary["server_url"] + "/static/";
+         manifestUrl = (string)dictionary["server_url"] + "/static/manifest.json";
+         streamingAssetsFile = TFUtils.GetStreamingAssetsFile("global_settings.json");
+diff --git a/Assets/Scripts/Assembly-CSharp/ShuffleAndDraw.cs b/Assets/Scripts/Assembly-CSharp/ShuffleAndDraw.cs
+index 58e22733..29e3320b 100644
+--- a/Assets/Scripts/Assembly-CSharp/ShuffleAndDraw.cs
++++ b/Assets/Scripts/Assembly-CSharp/ShuffleAndDraw.cs
+@@ -23,7 +23,7 @@ public class ShuffleAndDraw : SpellScript
+ 			deck.AddCard(newCard);
+ 			hand.RemoveAt(0);
+ 		}
+-		deck.Shuffle();
++		deck.Shuffle(base.Owner);
+ 		for (int i = 0; i < 5; i++)
+ 		{
+ 			base.GameInstance.DrawCard(base.Owner);
+diff --git a/Assets/Scripts/Assembly-CSharp/ShuffleHand.cs b/Assets/Scripts/Assembly-CSharp/ShuffleHand.cs
+index fee01cfb..6ad3b964 100644
+--- a/Assets/Scripts/Assembly-CSharp/ShuffleHand.cs
++++ b/Assets/Scripts/Assembly-CSharp/ShuffleHand.cs
+@@ -30,7 +30,7 @@ public class ShuffleHand : CreatureScript
+ 			deck.AddCard(newCard);
+ 			hand.RemoveAt(0);
+ 		}
+-		deck.Shuffle();
++		deck.Shuffle(base.Owner);
+ 		for (int i = 0; i < 5; i++)
+ 		{
+ 			base.GameInstance.DrawCard(base.Owner);
+diff --git a/Assets/Scripts/Assembly-CSharp/SwapATKDEFOpponent.cs b/Assets/Scripts/Assembly-CSharp/SwapATKDEFOpponent.cs
+index 2d3c5fa3..4b5b1b08 100644
+--- a/Assets/Scripts/Assembly-CSharp/SwapATKDEFOpponent.cs
++++ b/Assets/Scripts/Assembly-CSharp/SwapATKDEFOpponent.cs
+@@ -139,7 +139,7 @@ public class SwapATKDEFOpponent : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/SwapATKDEFSelf.cs b/Assets/Scripts/Assembly-CSharp/SwapATKDEFSelf.cs
+index 9c3e87dd..1462052a 100644
+--- a/Assets/Scripts/Assembly-CSharp/SwapATKDEFSelf.cs
++++ b/Assets/Scripts/Assembly-CSharp/SwapATKDEFSelf.cs
+@@ -139,7 +139,7 @@ public class SwapATKDEFSelf : SpellScript
+ 
+ 	public override void Cast()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(base.Owner, SelectionType.Creature, KFFLocalization.Get("!!PICK_A_CREATURE"));
+ 			return;
+diff --git a/Assets/Scripts/Assembly-CSharp/TargetATKBonusATK.cs b/Assets/Scripts/Assembly-CSharp/TargetATKBonusATK.cs
+index 1fa4c612..e4f44739 100644
+--- a/Assets/Scripts/Assembly-CSharp/TargetATKBonusATK.cs
++++ b/Assets/Scripts/Assembly-CSharp/TargetATKBonusATK.cs
+@@ -63,7 +63,7 @@ public class TargetATKBonusATK : CreatureScript
+ 
+ 	public override void Floop()
+ 	{
+-		if (base.Owner == PlayerType.User)
++		if (ChoosesByHand)
+ 		{
+ 			StartTargetSelection(!base.Owner, SelectionType.Creature, KFFLocalization.Get("!!TAP_CREATURE_TO_ATTACK"));
+ 			return;
+diff --git a/Assets/StreamingAssets/server_settings.json b/Assets/StreamingAssets/server_settings.json
+index efe52296..045a4177 100644
+--- a/Assets/StreamingAssets/server_settings.json
++++ b/Assets/StreamingAssets/server_settings.json
+@@ -2,5 +2,6 @@
+     "type" : "server_settings",
+     "server_url" : "http://cardwars.retroretreat.net/",
+     "offline_mode" : true,
+-    "skip_tutorial" : true
++    "skip_tutorial" : true,
++    "infinite_currency" : true
+ }
+diff --git a/Packages/manifest.json b/Packages/manifest.json
+index 38c568d4..476d0c3c 100644
+--- a/Packages/manifest.json
++++ b/Packages/manifest.json
+@@ -10,6 +10,9 @@
+     "com.unity.test-framework": "1.8.0",
+     "com.unity.timeline": "6.6.0",
+     "com.unity.ugui": "2.6.0",
++    "com.unity.xr.arcore": "6.6.2",
++    "com.unity.xr.arfoundation": "6.6.2",
++    "com.unity.xr.arkit": "6.6.2",
+     "com.unity.xr.legacyinputhelpers": "3.0.1",
+     "com.unity.modules.accessibility": "1.0.0",
+     "com.unity.modules.adaptiveperformance": "1.0.0",
+diff --git a/Packages/packages-lock.json b/Packages/packages-lock.json
+index 132215dc..7105426f 100644
+--- a/Packages/packages-lock.json
++++ b/Packages/packages-lock.json
+@@ -24,6 +24,12 @@
+       },
+       "url": "https://packages.unity.com"
+     },
++    "com.unity.editorcoroutines": {
++      "version": "6.6.0",
++      "depth": 1,
++      "source": "builtin",
++      "dependencies": {}
++    },
+     "com.unity.ext.nunit": {
+       "version": "2.1.0",
+       "depth": 1,
+@@ -53,6 +59,21 @@
+       "dependencies": {},
+       "url": "https://packages.unity.com"
+     },
++    "com.unity.inputsystem": {
++      "version": "1.20.1",
++      "depth": 1,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.modules.uielements": "1.0.0"
++      },
++      "url": "https://packages.unity.com"
++    },
++    "com.unity.mathematics": {
++      "version": "1.4.0",
++      "depth": 1,
++      "source": "builtin",
++      "dependencies": {}
++    },
+     "com.unity.multiplayer.center": {
+       "version": "2.1.0",
+       "depth": 0,
+@@ -94,6 +115,58 @@
+         "com.unity.modules.physics": "1.0.0"
+       }
+     },
++    "com.unity.xr.arcore": {
++      "version": "6.6.2",
++      "depth": 0,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.xr.core-utils": "2.6.0",
++        "com.unity.xr.management": "4.4.0",
++        "com.unity.xr.arfoundation": "6.6.2",
++        "com.unity.modules.androidjni": "1.0.0",
++        "com.unity.modules.unitywebrequest": "1.0.0"
++      },
++      "url": "https://packages.unity.com"
++    },
++    "com.unity.xr.arfoundation": {
++      "version": "6.6.2",
++      "depth": 0,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.ugui": "2.0.0",
++        "com.unity.modules.ui": "1.0.0",
++        "com.unity.inputsystem": "1.6.3",
++        "com.unity.mathematics": "1.2.6",
++        "com.unity.xr.core-utils": "2.6.0",
++        "com.unity.xr.management": "4.4.0",
++        "com.unity.editorcoroutines": "1.0.0",
++        "com.unity.modules.particlesystem": "1.0.0",
++        "com.unity.modules.unityanalytics": "1.0.0",
++        "com.unity.modules.unitywebrequest": "1.0.0"
++      },
++      "url": "https://packages.unity.com"
++    },
++    "com.unity.xr.arkit": {
++      "version": "6.6.2",
++      "depth": 0,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.xr.core-utils": "2.2.2",
++        "com.unity.xr.management": "4.4.0",
++        "com.unity.xr.arfoundation": "6.6.2",
++        "com.unity.editorcoroutines": "1.0.0"
++      },
++      "url": "https://packages.unity.com"
++    },
++    "com.unity.xr.core-utils": {
++      "version": "2.6.0",
++      "depth": 1,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.modules.xr": "1.0.0"
++      },
++      "url": "https://packages.unity.com"
++    },
+     "com.unity.xr.legacyinputhelpers": {
+       "version": "3.0.1",
+       "depth": 0,
+@@ -103,6 +176,18 @@
+       },
+       "url": "https://packages.unity.com"
+     },
++    "com.unity.xr.management": {
++      "version": "4.7.0",
++      "depth": 1,
++      "source": "registry",
++      "dependencies": {
++        "com.unity.modules.xr": "1.0.0",
++        "com.unity.xr.core-utils": "2.2.1",
++        "com.unity.modules.subsystems": "1.0.0",
++        "com.unity.xr.legacyinputhelpers": "2.1.11"
++      },
++      "url": "https://packages.unity.com"
++    },
+     "com.unity.modules.accessibility": {
+       "version": "1.0.0",
+       "depth": 0,
+@@ -294,6 +379,15 @@
+       "source": "builtin",
+       "dependencies": {}
+     },
++    "com.unity.modules.unityanalytics": {
++      "version": "1.0.0",
++      "depth": 1,
++      "source": "builtin",
++      "dependencies": {
++        "com.unity.modules.unitywebrequest": "1.0.0",
++        "com.unity.modules.jsonserialize": "1.0.0"
++      }
++    },
+     "com.unity.modules.unitywebrequest": {
+       "version": "1.0.0",
+       "depth": 0,
+diff --git a/ProjectSettings/EditorBuildSettings.asset b/ProjectSettings/EditorBuildSettings.asset
+index d77276ce..2107d6c6 100644
+--- a/ProjectSettings/EditorBuildSettings.asset
++++ b/ProjectSettings/EditorBuildSettings.asset
+@@ -41,4 +41,8 @@ EditorBuildSettings:
+   - enabled: 1
+     path: Assets/Scene/_hirez/Scenes/QuestMapScene.unity
+     guid: f0a0866e4873c344e859822f00e39e49
+-  m_configObjects: {}
++  m_configObjects:
++    UnityEditor.XR.ARCore.ARCoreSettings: {fileID: 11400000, guid: 9aa1bfacfaa21452db4d2cd00d742dca, type: 2}
++    UnityEditor.XR.ARKit.ARKitSettings: {fileID: 11400000, guid: 67a25108f49d745d3be10c3ff33a0487, type: 2}
++    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: 85a2b30acd2014864b19a5b55a3a84fd, type: 2}
++    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 8110a087b38b44d888077ff388146d52, type: 2}
+diff --git a/ProjectSettings/ProjectSettings.asset b/ProjectSettings/ProjectSettings.asset
+index 19d9de72..17e4ef28 100644
+--- a/ProjectSettings/ProjectSettings.asset
++++ b/ProjectSettings/ProjectSettings.asset
+@@ -171,7 +171,7 @@ PlayerSettings:
+   androidMinAspectRatio: 1
+   applicationIdentifier:
+     Android: app.recompile.cardwars
+-    iPhone: app.recompile.cardwars
++    iPhone: com.aaron3312.cardwarsar
+   buildNumber:
+     Standalone: 0
+     VisionOS: 0
+@@ -576,7 +576,7 @@ PlayerSettings:
+   enableInternalProfiler: 0
+   logObjCUncaughtExceptions: 1
+   enableCrashReportAPI: 0
+-  cameraUsageDescription: 
++  cameraUsageDescription: "La c\xE1mara muestra el tablero de Card Wars sobre tu mesa, en realidad aumentada."
+   locationUsageDescription: 
+   microphoneUsageDescription: 
+   bluetoothUsageDescription: 
+@@ -837,7 +837,8 @@ PlayerSettings:
+   webWasm2023: 1
+   webEnableSubmoduleStrippingCompatibility: 0
+   webProgressiveAssetLoading: 0
+-  scriptingDefineSymbols: {}
++  scriptingDefineSymbols:
++    iPhone: UNITY_XR_ARKIT_LOADER_ENABLED
+   additionalCompilerArguments: {}
+   platformArchitecture: {}
+   scriptingBackend:
+@@ -949,7 +950,7 @@ PlayerSettings:
+   qnxGraphicConfPath: 
+   apiCompatibilityLevel: 6
+   captureStartupLogs: {}
+-  activeInputHandler: 0
++  activeInputHandler: 2
+   windowsGamepadBackendHint: 0
+   enableDirectStorage: 0
+   cloudProjectId: 
